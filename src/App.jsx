@@ -18,6 +18,12 @@ const CATEGORIES = [
 
 const CATEGORY_MAP = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 
+// Check if Firebase is configured
+const isFirebaseConfigured = () => {
+  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+  return apiKey && apiKey !== 'your-api-key-here' && apiKey !== undefined;
+};
+
 // Generate a short list code (6 chars)
 function generateCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -28,7 +34,23 @@ function getListCodeFromUrl() {
   return params.get('list') || null;
 }
 
+// Local storage fallback for demo mode
+const LOCAL_STORAGE_KEY = 'shopping-list-demo';
+
+function loadLocalItems() {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalItems(items) {
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
+}
+
 export default function App() {
+  const firebaseOk = isFirebaseConfigured();
   const [listCode, setListCode] = useState(() => getListCodeFromUrl() || null);
   const [inputCode, setInputCode] = useState('');
   const [items, setItems] = useState({});
@@ -39,29 +61,43 @@ export default function App() {
   const [showJoin, setShowJoin] = useState(false);
   const inputRef = useRef(null);
 
-  // Listen to Firebase
+  // Listen to Firebase (or local storage in demo mode)
   useEffect(() => {
     if (!listCode) return;
-    const itemsRef = ref(db, `lists/${listCode}/items`);
-    const unsub = onValue(itemsRef, (snapshot) => {
-      setItems(snapshot.val() || {});
-    });
-    return () => unsub();
-  }, [listCode]);
+
+    if (firebaseOk) {
+      const itemsRef = ref(db, `lists/${listCode}/items`);
+      const unsub = onValue(itemsRef, (snapshot) => {
+        setItems(snapshot.val() || {});
+      });
+      return () => unsub();
+    } else {
+      // Demo mode: use localStorage
+      setItems(loadLocalItems());
+    }
+  }, [listCode, firebaseOk]);
 
   // Create a new list
   function createNewList() {
     const code = generateCode();
-    const listRef = ref(db, `lists/${code}`);
-    set(listRef, {
-      createdAt: Date.now(),
-      items: {},
-    }).then(() => {
+    if (firebaseOk) {
+      const listRef = ref(db, `lists/${code}`);
+      set(listRef, {
+        createdAt: Date.now(),
+        items: {},
+      }).then(() => {
+        setListCode(code);
+        const url = new URL(window.location.href);
+        url.searchParams.set('list', code);
+        window.history.replaceState({}, '', url.toString());
+      });
+    } else {
+      // Demo mode
       setListCode(code);
       const url = new URL(window.location.href);
       url.searchParams.set('list', code);
       window.history.replaceState({}, '', url.toString());
-    });
+    }
   }
 
   // Join an existing list
@@ -80,27 +116,49 @@ export default function App() {
     e.preventDefault();
     const text = newItemText.trim();
     if (!text || !listCode) return;
-    const itemsRef = ref(db, `lists/${listCode}/items`);
-    push(itemsRef, {
+
+    const newItem = {
       text,
       category: newItemCategory,
       purchased: false,
       addedAt: Date.now(),
-    });
+    };
+
+    if (firebaseOk) {
+      const itemsRef = ref(db, `lists/${listCode}/items`);
+      push(itemsRef, newItem);
+    } else {
+      const updated = { ...items, [Date.now().toString()]: newItem };
+      setItems(updated);
+      saveLocalItems(updated);
+    }
     setNewItemText('');
     inputRef.current?.focus();
   }
 
   // Toggle purchased
   function toggleItem(id, current) {
-    update(ref(db, `lists/${listCode}/items/${id}`), {
-      purchased: !current,
-    });
+    if (firebaseOk) {
+      update(ref(db, `lists/${listCode}/items/${id}`), {
+        purchased: !current,
+      });
+    } else {
+      const updated = { ...items, [id]: { ...items[id], purchased: !current } };
+      setItems(updated);
+      saveLocalItems(updated);
+    }
   }
 
   // Remove item
   function removeItem(id) {
-    remove(ref(db, `lists/${listCode}/items/${id}`));
+    if (firebaseOk) {
+      remove(ref(db, `lists/${listCode}/items/${id}`));
+    } else {
+      const updated = { ...items };
+      delete updated[id];
+      setItems(updated);
+      saveLocalItems(updated);
+    }
   }
 
   // Clear all purchased
@@ -142,7 +200,17 @@ export default function App() {
         <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm text-center">
           <div className="text-5xl mb-4">🛒</div>
           <h1 className="text-2xl font-bold text-green-800 mb-2">רשימת קניות משפחתית</h1>
-          <p className="text-gray-500 mb-8 text-sm">סנכרון בזמן אמת עם בן/בת הזוג</p>
+          <p className="text-gray-500 mb-6 text-sm">סנכרון בזמן אמת עם בן/בת הזוג</p>
+
+          {!firebaseOk && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-6 text-right">
+              <p className="text-yellow-700 text-xs font-medium">⚠️ מצב הדגמה</p>
+              <p className="text-yellow-600 text-xs mt-1">
+                Firebase לא מוגדר. הנתונים נשמרים רק בדפדפן הזה.
+                לסנכרון אמיתי עם בן/בת זוג, הוסף Firebase Config.
+              </p>
+            </div>
+          )}
 
           <button
             onClick={createNewList}
@@ -199,7 +267,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Progress */}
+          {/* Progress bar */}
           <div className="flex items-center gap-2">
             <div className="flex-1 bg-green-900 rounded-full h-2">
               <div
@@ -211,6 +279,10 @@ export default function App() {
               {purchasedCount}/{totalItems}
             </span>
           </div>
+
+          {!firebaseOk && (
+            <p className="text-yellow-300 text-xs mt-1 text-center">⚠️ מצב הדגמה – נתונים מקומיים בלבד</p>
+          )}
         </div>
       </header>
 
@@ -310,7 +382,6 @@ export default function App() {
           <div className="space-y-2">
             {filteredItems
               .sort((a, b) => {
-                // Sort: unpurchased first, then by category, then by time
                 if (a[1].purchased !== b[1].purchased) return a[1].purchased ? 1 : -1;
                 if (a[1].category !== b[1].category) return a[1].category.localeCompare(b[1].category);
                 return (a[1].addedAt || 0) - (b[1].addedAt || 0);
@@ -378,11 +449,12 @@ export default function App() {
 
         {/* List code footer */}
         <div className="mt-6 text-center text-gray-400 text-xs pb-4">
-          <p>קוד הרשימה שלך: <span className="font-bold tracking-widest text-gray-600">{listCode}</span></p>
-          <p className="mt-1">שתף עם בן/בת הזוג כדי לסנכרן בזמן אמת</p>
+          <p>קוד הרשימה: <span className="font-bold tracking-widest text-gray-600">{listCode}</span></p>
+          <p className="mt-1">שתף עם בן/בת הזוג לסנכרון בזמן אמת</p>
           <button
             onClick={() => {
               setListCode(null);
+              setItems({});
               const url = new URL(window.location.href);
               url.searchParams.delete('list');
               window.history.replaceState({}, '', url.toString());
