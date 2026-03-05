@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ref, onValue, push, update, remove, set } from 'firebase/database';
-import { db } from './firebase';
+import { subscribeToList, saveItems } from './firebase';
 
 // Categories with Hebrew labels and emoji icons
 const CATEGORIES = [
@@ -66,13 +65,11 @@ export default function App() {
     if (!listCode) return;
 
     if (firebaseOk) {
-      const itemsRef = ref(db, `lists/${listCode}/items`);
-      const unsub = onValue(itemsRef, (snapshot) => {
-        setItems(snapshot.val() || {});
+      const unsub = subscribeToList(listCode, (newItems) => {
+        setItems(newItems);
       });
       return () => unsub();
     } else {
-      // Demo mode: use localStorage
       setItems(loadLocalItems());
     }
   }, [listCode, firebaseOk]);
@@ -80,23 +77,12 @@ export default function App() {
   // Create a new list
   function createNewList() {
     const code = generateCode();
+    setListCode(code);
+    const url = new URL(window.location.href);
+    url.searchParams.set('list', code);
+    window.history.replaceState({}, '', url.toString());
     if (firebaseOk) {
-      const listRef = ref(db, `lists/${code}`);
-      set(listRef, {
-        createdAt: Date.now(),
-        items: {},
-      }).then(() => {
-        setListCode(code);
-        const url = new URL(window.location.href);
-        url.searchParams.set('list', code);
-        window.history.replaceState({}, '', url.toString());
-      });
-    } else {
-      // Demo mode
-      setListCode(code);
-      const url = new URL(window.location.href);
-      url.searchParams.set('list', code);
-      window.history.replaceState({}, '', url.toString());
+      saveItems(code, {});
     }
   }
 
@@ -124,11 +110,10 @@ export default function App() {
       addedAt: Date.now(),
     };
 
+    const updated = { ...items, [Date.now().toString()]: newItem };
     if (firebaseOk) {
-      const itemsRef = ref(db, `lists/${listCode}/items`);
-      push(itemsRef, newItem);
+      saveItems(listCode, updated);
     } else {
-      const updated = { ...items, [Date.now().toString()]: newItem };
       setItems(updated);
       saveLocalItems(updated);
     }
@@ -138,12 +123,10 @@ export default function App() {
 
   // Toggle purchased
   function toggleItem(id, current) {
+    const updated = { ...items, [id]: { ...items[id], purchased: !current } };
     if (firebaseOk) {
-      update(ref(db, `lists/${listCode}/items/${id}`), {
-        purchased: !current,
-      });
+      saveItems(listCode, updated);
     } else {
-      const updated = { ...items, [id]: { ...items[id], purchased: !current } };
       setItems(updated);
       saveLocalItems(updated);
     }
@@ -151,11 +134,11 @@ export default function App() {
 
   // Remove item
   function removeItem(id) {
+    const updated = { ...items };
+    delete updated[id];
     if (firebaseOk) {
-      remove(ref(db, `lists/${listCode}/items/${id}`));
+      saveItems(listCode, updated);
     } else {
-      const updated = { ...items };
-      delete updated[id];
       setItems(updated);
       saveLocalItems(updated);
     }

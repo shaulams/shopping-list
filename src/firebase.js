@@ -1,12 +1,9 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase } from 'firebase/database';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
-// Firebase config - Replace with your own Firebase project config
-// Get it from: https://console.firebase.google.com → Project Settings → Your apps
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
@@ -14,4 +11,27 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getDatabase(app);
+export const db = getFirestore(app);
+
+// Get or create a list document in Firestore
+export function getListRef(listCode) {
+  return doc(db, 'shopping-lists', listCode);
+}
+
+// Subscribe to real-time updates for a list
+export function subscribeToList(listCode, callback) {
+  const ref = getListRef(listCode);
+  return onSnapshot(ref, (snap) => {
+    if (snap.exists()) {
+      callback(snap.data().items || {});
+    } else {
+      callback({});
+    }
+  });
+}
+
+// Save items to Firestore
+export async function saveItems(listCode, items) {
+  const ref = getListRef(listCode);
+  await setDoc(ref, { items, updatedAt: new Date().toISOString() }, { merge: true });
+}
