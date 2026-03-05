@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  direction: rtl;
+  font-family: 'Segoe UI', 'Arial Hebrew', Arial, sans-serif;
+  background-color: #f0fdf4;
+  margin: 0;
+  padding: 0;
+}
+
+input[type="text"] {
+  direction: rtl;
+}
+
+.line-through {
+  text-decoration: line-through;
+}
